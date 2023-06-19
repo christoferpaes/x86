@@ -1,0 +1,50 @@
+.model small
+.stack 100h
+
+.data
+    buffer db 80 dup(0)
+    message db 0ah, 'Enter a string: $'
+    filename db 'output.txt', 0
+    filehandle dw ?
+
+.code
+main proc
+    mov ax, @data
+    mov ds, ax
+    
+    mov ah, 09h
+    lea dx, message
+    int 21h  ; Display the message
+    
+    mov ah, 0ah
+    lea dx, buffer
+    int 21h  ; Read the input
+    
+    mov ah, 09h
+    lea dx, buffer
+    int 21h  ; Display the input
+    
+    ; Open the file for writing
+    mov ah, 3ch
+    lea dx, filename
+    mov cx, 0
+    int 21h  ; Create or open the file
+    mov filehandle, ax  ; Store the file handle
+    
+    ; Write the input to the file
+    mov ah, 40h
+    mov bx, filehandle
+    mov dx, offset buffer + 2  ; Offset the buffer to skip the first byte (length)
+    mov cx, word ptr buffer  ; Get the length of the input
+    int 21h  ; Write to the file
+    
+    ; Close the file
+    mov ah, 3eh
+    mov bx, filehandle
+    int 21h  ; Close the file
+    
+    mov ax, 4c00h
+    int 21h  ; Exit the program
+main endp
+
+end main
